@@ -323,11 +323,11 @@ ui <- dashboardPage(
                       actionButton("find_similar_demographics", "Similar Demographics", 
                                    class = "btn-warning", style = "margin: 5px;"),
                       br(),
-                      actionButton("find_similar_performance", "Similar Performance", 
+                      actionButton("find_similar_performance", "Similar Performance",
                                    class = "btn-warning", style = "margin: 5px;"),
                       br(),
                       hr(),
-                      div(id = "similar_jurisdictions_list")
+                      uiOutput("similar_jurisdictions_display")
                     )
                   )
                 ),
@@ -1104,6 +1104,246 @@ server <- function(input, output, session) {
       data.frame(Variable = "Error", Value = "Unable to load data")
     })
   }, options = list(pageLength = 25, scrollX = TRUE, scrollY = "300px"))
+
+  # ============================================================================
+  # SIMILAR JURISDICTIONS FUNCTIONALITY
+  # ============================================================================
+
+  # Reactive value to store similar jurisdictions
+  similar_jurisdictions <- reactiveVal(NULL)
+  similar_method <- reactiveVal(NULL)
+
+  # Find similar jurisdictions by size
+  observeEvent(input$find_similar_size, {
+    cat("=== FINDING SIMILAR JURISDICTIONS BY SIZE ===\n")
+    tryCatch({
+      juris <- selected_jurisdiction()
+      req(juris)
+
+      if (is.null(data()) || is.null(data()$jurisdiction)) {
+        cat("No jurisdiction data available\n")
+        return()
+      }
+
+      target_registered <- juris$a1a
+      if (is.na(target_registered) || target_registered == 0) {
+        similar_jurisdictions(data.frame())
+        similar_method("size_error")
+        return()
+      }
+
+      cat("Target registered voters:", target_registered, "\n")
+
+      # Find jurisdictions within 20% of target size
+      lower_bound <- target_registered * 0.8
+      upper_bound <- target_registered * 1.2
+
+      similar <- data()$jurisdiction %>%
+        filter(
+          fips_code != juris$fips_code,  # Exclude current jurisdiction
+          !is.na(a1a),
+          a1a >= lower_bound,
+          a1a <= upper_bound
+        ) %>%
+        mutate(
+          size_difference = abs(a1a - target_registered),
+          size_diff_pct = round((size_difference / target_registered) * 100, 1)
+        ) %>%
+        arrange(size_difference) %>%
+        head(10) %>%
+        select(jurisdiction_name, state_abbr, a1a, size_diff_pct, turnout_rate, mail_return_rate)
+
+      cat("Found", nrow(similar), "similar jurisdictions by size\n")
+
+      similar_jurisdictions(similar)
+      similar_method("size")
+
+    }, error = function(e) {
+      cat("ERROR finding similar jurisdictions by size:", e$message, "\n")
+      similar_jurisdictions(data.frame())
+      similar_method("error")
+    })
+  })
+
+  # Find similar jurisdictions by demographics
+  observeEvent(input$find_similar_demographics, {
+    cat("=== FINDING SIMILAR JURISDICTIONS BY DEMOGRAPHICS ===\n")
+    tryCatch({
+      juris <- selected_jurisdiction()
+      req(juris)
+
+      if (is.null(data()) || is.null(data()$jurisdiction)) {
+        cat("No jurisdiction data available\n")
+        return()
+      }
+
+      target_region <- juris$region
+      target_size_category <- juris$jurisdiction_size
+
+      if (is.na(target_region) && is.na(target_size_category)) {
+        similar_jurisdictions(data.frame())
+        similar_method("demographics_error")
+        return()
+      }
+
+      cat("Target region:", target_region, "Target size category:", target_size_category, "\n")
+
+      # Find jurisdictions in same region and size category
+      similar <- data()$jurisdiction %>%
+        filter(fips_code != juris$fips_code) %>%
+        mutate(
+          region_match = ifelse(!is.na(region) & !is.na(target_region) & region == target_region, 1, 0),
+          size_match = ifelse(!is.na(jurisdiction_size) & !is.na(target_size_category) &
+                             jurisdiction_size == target_size_category, 1, 0),
+          match_score = region_match + size_match
+        ) %>%
+        filter(match_score > 0) %>%
+        arrange(desc(match_score), jurisdiction_name) %>%
+        head(10) %>%
+        select(jurisdiction_name, state_abbr, region, jurisdiction_size, a1a, turnout_rate, match_score)
+
+      cat("Found", nrow(similar), "similar jurisdictions by demographics\n")
+
+      similar_jurisdictions(similar)
+      similar_method("demographics")
+
+    }, error = function(e) {
+      cat("ERROR finding similar jurisdictions by demographics:", e$message, "\n")
+      similar_jurisdictions(data.frame())
+      similar_method("error")
+    })
+  })
+
+  # Find similar jurisdictions by performance
+  observeEvent(input$find_similar_performance, {
+    cat("=== FINDING SIMILAR JURISDICTIONS BY PERFORMANCE ===\n")
+    tryCatch({
+      juris <- selected_jurisdiction()
+      req(juris)
+
+      if (is.null(data()) || is.null(data()$jurisdiction)) {
+        cat("No jurisdiction data available\n")
+        return()
+      }
+
+      target_turnout <- juris$turnout_rate
+      target_mail_return <- juris$mail_return_rate
+
+      if (is.na(target_turnout) && is.na(target_mail_return)) {
+        similar_jurisdictions(data.frame())
+        similar_method("performance_error")
+        return()
+      }
+
+      cat("Target turnout:", target_turnout, "Target mail return:", target_mail_return, "\n")
+
+      # Calculate performance similarity score
+      similar <- data()$jurisdiction %>%
+        filter(
+          fips_code != juris$fips_code,
+          !is.na(turnout_rate) | !is.na(mail_return_rate)
+        ) %>%
+        mutate(
+          turnout_diff = ifelse(!is.na(turnout_rate) & !is.na(target_turnout),
+                               abs(turnout_rate - target_turnout), NA),
+          mail_diff = ifelse(!is.na(mail_return_rate) & !is.na(target_mail_return),
+                            abs(mail_return_rate - target_mail_return), NA),
+          # Combined performance score (lower is better)
+          perf_score = ifelse(!is.na(turnout_diff) & !is.na(mail_diff),
+                             (turnout_diff + mail_diff) / 2,
+                             ifelse(!is.na(turnout_diff), turnout_diff, mail_diff))
+        ) %>%
+        filter(!is.na(perf_score)) %>%
+        arrange(perf_score) %>%
+        head(10) %>%
+        select(jurisdiction_name, state_abbr, turnout_rate, mail_return_rate,
+               jurisdiction_size, a1a, perf_score)
+
+      cat("Found", nrow(similar), "similar jurisdictions by performance\n")
+
+      similar_jurisdictions(similar)
+      similar_method("performance")
+
+    }, error = function(e) {
+      cat("ERROR finding similar jurisdictions by performance:", e$message, "\n")
+      similar_jurisdictions(data.frame())
+      similar_method("error")
+    })
+  })
+
+  # Display similar jurisdictions
+  output$similar_jurisdictions_display <- renderUI({
+    cat("=== RENDERING SIMILAR JURISDICTIONS DISPLAY ===\n")
+
+    method <- similar_method()
+    similar <- similar_jurisdictions()
+
+    if (is.null(method)) {
+      return(div(
+        style = "text-align: left; padding: 10px; font-size: 12px; color: #666;",
+        p("Click a button above to find similar jurisdictions")
+      ))
+    }
+
+    if (method == "error" || method == "size_error" ||
+        method == "demographics_error" || method == "performance_error") {
+      return(div(
+        style = "text-align: left; padding: 10px; font-size: 12px; color: #d9534f;",
+        p(strong("Unable to find similar jurisdictions")),
+        p("Insufficient data for comparison")
+      ))
+    }
+
+    if (is.null(similar) || nrow(similar) == 0) {
+      return(div(
+        style = "text-align: left; padding: 10px; font-size: 12px; color: #666;",
+        p("No similar jurisdictions found")
+      ))
+    }
+
+    # Create display based on method
+    if (method == "size") {
+      jurisdiction_items <- lapply(1:nrow(similar), function(i) {
+        tags$div(
+          style = "padding: 5px; border-bottom: 1px solid #eee;",
+          tags$strong(paste0(similar$jurisdiction_name[i], ", ", similar$state_abbr[i])),
+          tags$br(),
+          tags$small(
+            paste0("Registered: ", format(similar$a1a[i], big.mark = ","),
+                   " (", similar$size_diff_pct[i], "% diff)")
+          )
+        )
+      })
+    } else if (method == "demographics") {
+      jurisdiction_items <- lapply(1:nrow(similar), function(i) {
+        tags$div(
+          style = "padding: 5px; border-bottom: 1px solid #eee;",
+          tags$strong(paste0(similar$jurisdiction_name[i], ", ", similar$state_abbr[i])),
+          tags$br(),
+          tags$small(
+            paste0(similar$region[i], " | ", similar$jurisdiction_size[i])
+          )
+        )
+      })
+    } else if (method == "performance") {
+      jurisdiction_items <- lapply(1:nrow(similar), function(i) {
+        tags$div(
+          style = "padding: 5px; border-bottom: 1px solid #eee;",
+          tags$strong(paste0(similar$jurisdiction_name[i], ", ", similar$state_abbr[i])),
+          tags$br(),
+          tags$small(
+            paste0("Turnout: ", round(similar$turnout_rate[i], 1), "% | ",
+                   "Mail Return: ", round(similar$mail_return_rate[i], 1), "%")
+          )
+        )
+      })
+    }
+
+    return(div(
+      style = "text-align: left; max-height: 180px; overflow-y: auto; font-size: 11px;",
+      jurisdiction_items
+    ))
+  })
 
   cat("=== JURISDICTION PROFILE TAB COMPLETE ===\n")
 
