@@ -781,7 +781,336 @@ server <- function(input, output, session) {
   }, options = list(pageLength = 25, scrollX = TRUE))
   
   cat("=== ADDITIONAL TABS FUNCTIONALITY ADDED ===\n")
-  
+
+  # ============================================================================
+  # JURISDICTION PROFILE TAB - Complete Implementation
+  # ============================================================================
+
+  # Populate state dropdown for jurisdiction profile
+  observe({
+    cat("=== SETTING UP JURISDICTION PROFILE STATE FILTER ===\n")
+    tryCatch({
+      if (!is.null(data()) && !is.null(data()$jurisdiction)) {
+        states <- data()$jurisdiction %>%
+          select(state_abbr, state_full) %>%
+          distinct() %>%
+          arrange(state_abbr)
+
+        state_choices <- setNames(states$state_abbr, paste0(states$state_abbr, " - ", states$state_full))
+
+        cat("Profile states available:", length(state_choices), "\n")
+        updateSelectInput(session, "profile_state", choices = c("Select a state" = "", state_choices))
+      }
+    }, error = function(e) {
+      cat("ERROR setting up profile state filter:", e$message, "\n")
+    })
+  })
+
+  # Update jurisdiction dropdown based on selected state
+  observe({
+    cat("=== UPDATING JURISDICTION DROPDOWN ===\n")
+    tryCatch({
+      req(input$profile_state)
+
+      if (input$profile_state != "" && !is.null(data()) && !is.null(data()$jurisdiction)) {
+        jurisdictions <- data()$jurisdiction %>%
+          filter(state_abbr == input$profile_state) %>%
+          arrange(jurisdiction_name) %>%
+          select(fips_code, jurisdiction_name)
+
+        jurisdiction_choices <- setNames(jurisdictions$fips_code, jurisdictions$jurisdiction_name)
+
+        cat("Jurisdictions for", input$profile_state, ":", length(jurisdiction_choices), "\n")
+        updateSelectInput(session, "profile_jurisdiction",
+                         choices = c("Select a jurisdiction" = "", jurisdiction_choices))
+      } else {
+        updateSelectInput(session, "profile_jurisdiction", choices = c("Select a jurisdiction" = ""))
+      }
+    }, error = function(e) {
+      cat("ERROR updating jurisdiction dropdown:", e$message, "\n")
+    })
+  })
+
+  # Reactive expression for selected jurisdiction data
+  selected_jurisdiction <- reactive({
+    cat("=== GETTING SELECTED JURISDICTION DATA ===\n")
+    req(input$profile_jurisdiction, input$profile_jurisdiction != "")
+
+    tryCatch({
+      if (is.null(data()) || is.null(data()$jurisdiction)) {
+        cat("No jurisdiction data available\n")
+        return(NULL)
+      }
+
+      jurisdiction_data <- data()$jurisdiction %>%
+        filter(fips_code == input$profile_jurisdiction)
+
+      if (nrow(jurisdiction_data) == 0) {
+        cat("No data found for FIPS code:", input$profile_jurisdiction, "\n")
+        return(NULL)
+      }
+
+      cat("Selected jurisdiction:", jurisdiction_data$jurisdiction_name[1], "\n")
+      return(jurisdiction_data)
+
+    }, error = function(e) {
+      cat("ERROR getting jurisdiction data:", e$message, "\n")
+      return(NULL)
+    })
+  })
+
+  # Value boxes for jurisdiction profile
+  output$jurisdiction_registered <- renderValueBox({
+    cat("=== RENDERING JURISDICTION REGISTERED ===\n")
+    tryCatch({
+      juris <- selected_jurisdiction()
+      req(juris)
+
+      registered <- juris$a1a
+      if (is.na(registered)) registered <- 0
+
+      valueBox(
+        value = format(registered, big.mark = ","),
+        subtitle = "Total Registered Voters",
+        icon = icon("users"),
+        color = "blue"
+      )
+    }, error = function(e) {
+      cat("ERROR in jurisdiction_registered:", e$message, "\n")
+      valueBox("N/A", "Registered Voters", icon = icon("exclamation"), color = "red")
+    })
+  })
+
+  output$jurisdiction_turnout <- renderValueBox({
+    cat("=== RENDERING JURISDICTION TURNOUT ===\n")
+    tryCatch({
+      juris <- selected_jurisdiction()
+      req(juris)
+
+      # Calculate turnout rate
+      turnout_rate <- if (!is.na(juris$turnout_rate)) {
+        paste0(round(juris$turnout_rate, 1), "%")
+      } else if (!is.na(juris$f1a) && !is.na(juris$a1a) && juris$a1a > 0) {
+        paste0(round((juris$f1a / juris$a1a) * 100, 1), "%")
+      } else {
+        "N/A"
+      }
+
+      valueBox(
+        value = turnout_rate,
+        subtitle = "Turnout Rate",
+        icon = icon("vote-yea"),
+        color = "green"
+      )
+    }, error = function(e) {
+      cat("ERROR in jurisdiction_turnout:", e$message, "\n")
+      valueBox("N/A", "Turnout Rate", icon = icon("exclamation"), color = "red")
+    })
+  })
+
+  output$jurisdiction_mail_rate <- renderValueBox({
+    cat("=== RENDERING JURISDICTION MAIL RATE ===\n")
+    tryCatch({
+      juris <- selected_jurisdiction()
+      req(juris)
+
+      # Calculate mail return rate
+      mail_rate <- if (!is.na(juris$mail_return_rate)) {
+        paste0(round(juris$mail_return_rate, 1), "%")
+      } else if (!is.na(juris$c1b) && !is.na(juris$c1a) && juris$c1a > 0) {
+        paste0(round((juris$c1b / juris$c1a) * 100, 1), "%")
+      } else {
+        "N/A"
+      }
+
+      valueBox(
+        value = mail_rate,
+        subtitle = "Mail Return Rate",
+        icon = icon("envelope"),
+        color = "yellow"
+      )
+    }, error = function(e) {
+      cat("ERROR in jurisdiction_mail_rate:", e$message, "\n")
+      valueBox("N/A", "Mail Return Rate", icon = icon("exclamation"), color = "red")
+    })
+  })
+
+  output$jurisdiction_size_category <- renderValueBox({
+    cat("=== RENDERING JURISDICTION SIZE CATEGORY ===\n")
+    tryCatch({
+      juris <- selected_jurisdiction()
+      req(juris)
+
+      size_category <- if (!is.na(juris$jurisdiction_size)) {
+        juris$jurisdiction_size
+      } else {
+        "Unknown"
+      }
+
+      valueBox(
+        value = size_category,
+        subtitle = "Jurisdiction Size",
+        icon = icon("chart-bar"),
+        color = "purple"
+      )
+    }, error = function(e) {
+      cat("ERROR in jurisdiction_size_category:", e$message, "\n")
+      valueBox("Unknown", "Jurisdiction Size", icon = icon("exclamation"), color = "red")
+    })
+  })
+
+  # Registration details table
+  output$jurisdiction_registration_table <- renderTable({
+    cat("=== RENDERING JURISDICTION REGISTRATION TABLE ===\n")
+    tryCatch({
+      juris <- selected_jurisdiction()
+      req(juris)
+
+      data.frame(
+        Metric = c("Total Registered", "Active Voters", "Inactive Voters",
+                   "Online Registration", "Mail Registration", "DMV Registration"),
+        Value = c(
+          format(ifelse(is.na(juris$a1a), 0, juris$a1a), big.mark = ","),
+          format(ifelse(is.na(juris$a1b), 0, juris$a1b), big.mark = ","),
+          format(ifelse(is.na(juris$a1c), 0, juris$a1c), big.mark = ","),
+          format(ifelse(is.na(juris$a4c), 0, juris$a4c), big.mark = ","),
+          format(ifelse(is.na(juris$a4a), 0, juris$a4a), big.mark = ","),
+          format(ifelse(is.na(juris$a4e), 0, juris$a4e), big.mark = ",")
+        ),
+        stringsAsFactors = FALSE
+      )
+    }, error = function(e) {
+      cat("ERROR in jurisdiction_registration_table:", e$message, "\n")
+      data.frame(Metric = "Error", Value = "Unable to load data")
+    })
+  }, striped = TRUE, hover = TRUE, width = "100%")
+
+  # Voting methods breakdown chart
+  output$jurisdiction_voting_methods <- renderPlotly({
+    cat("=== RENDERING JURISDICTION VOTING METHODS ===\n")
+    tryCatch({
+      juris <- selected_jurisdiction()
+      req(juris)
+
+      # Create voting methods data
+      methods_data <- data.frame(
+        Method = c("In-Person on Election Day", "Mail/Absentee", "Early In-Person", "Provisional"),
+        Count = c(
+          ifelse(is.na(juris$f1b), 0, juris$f1b),
+          ifelse(is.na(juris$f1c), 0, juris$f1c),
+          ifelse(is.na(juris$f1d), 0, juris$f1d),
+          ifelse(is.na(juris$e1a), 0, juris$e1a)
+        )
+      ) %>%
+        filter(Count > 0)
+
+      if (nrow(methods_data) == 0) {
+        return(plotly_empty())
+      }
+
+      p <- ggplot(methods_data, aes(x = reorder(Method, Count), y = Count, fill = Method)) +
+        geom_col() +
+        coord_flip() +
+        labs(title = "Voting Methods Breakdown", x = "", y = "Number of Votes") +
+        theme_minimal() +
+        theme(legend.position = "none") +
+        scale_y_continuous(labels = scales::comma)
+
+      ggplotly(p)
+    }, error = function(e) {
+      cat("ERROR in jurisdiction_voting_methods:", e$message, "\n")
+      plotly_empty()
+    })
+  })
+
+  # Mail voting performance table
+  output$jurisdiction_mail_table <- renderTable({
+    cat("=== RENDERING JURISDICTION MAIL TABLE ===\n")
+    tryCatch({
+      juris <- selected_jurisdiction()
+      req(juris)
+
+      mail_sent <- ifelse(is.na(juris$c1a), 0, juris$c1a)
+      mail_returned <- ifelse(is.na(juris$c1b), 0, juris$c1b)
+      mail_counted <- ifelse(is.na(juris$c8a), 0, juris$c8a)
+
+      return_rate <- if (mail_sent > 0) paste0(round((mail_returned/mail_sent)*100, 1), "%") else "N/A"
+      acceptance_rate <- if (mail_returned > 0) paste0(round((mail_counted/mail_returned)*100, 1), "%") else "N/A"
+
+      data.frame(
+        Metric = c("Ballots Sent", "Ballots Returned", "Ballots Counted",
+                   "Return Rate", "Acceptance Rate"),
+        Value = c(
+          format(mail_sent, big.mark = ","),
+          format(mail_returned, big.mark = ","),
+          format(mail_counted, big.mark = ","),
+          return_rate,
+          acceptance_rate
+        ),
+        stringsAsFactors = FALSE
+      )
+    }, error = function(e) {
+      cat("ERROR in jurisdiction_mail_table:", e$message, "\n")
+      data.frame(Metric = "Error", Value = "Unable to load data")
+    })
+  }, striped = TRUE, hover = TRUE, width = "100%")
+
+  # Provisional ballots table
+  output$jurisdiction_provisional_table <- renderTable({
+    cat("=== RENDERING JURISDICTION PROVISIONAL TABLE ===\n")
+    tryCatch({
+      juris <- selected_jurisdiction()
+      req(juris)
+
+      prov_cast <- ifelse(is.na(juris$e1a), 0, juris$e1a)
+      prov_counted <- ifelse(is.na(juris$e1b), 0, juris$e1b)
+      prov_rejected <- ifelse(is.na(juris$e1c), 0, juris$e1c)
+
+      acceptance_rate <- if (prov_cast > 0) paste0(round((prov_counted/prov_cast)*100, 1), "%") else "N/A"
+
+      data.frame(
+        Metric = c("Provisional Cast", "Counted", "Rejected", "Acceptance Rate"),
+        Value = c(
+          format(prov_cast, big.mark = ","),
+          format(prov_counted, big.mark = ","),
+          format(prov_rejected, big.mark = ","),
+          acceptance_rate
+        ),
+        stringsAsFactors = FALSE
+      )
+    }, error = function(e) {
+      cat("ERROR in jurisdiction_provisional_table:", e$message, "\n")
+      data.frame(Metric = "Error", Value = "Unable to load data")
+    })
+  }, striped = TRUE, hover = TRUE, width = "100%")
+
+  # Complete jurisdiction data table
+  output$jurisdiction_complete_data <- DT::renderDataTable({
+    cat("=== RENDERING COMPLETE JURISDICTION DATA ===\n")
+    tryCatch({
+      juris <- selected_jurisdiction()
+      req(juris)
+
+      # Transpose the data for better viewing
+      juris_t <- data.frame(
+        Variable = names(juris),
+        Value = as.character(t(juris)[,1]),
+        stringsAsFactors = FALSE
+      )
+
+      return(juris_t)
+    }, error = function(e) {
+      cat("ERROR in jurisdiction_complete_data:", e$message, "\n")
+      data.frame(Variable = "Error", Value = "Unable to load data")
+    })
+  }, options = list(pageLength = 25, scrollX = TRUE, scrollY = "300px"))
+
+  cat("=== JURISDICTION PROFILE TAB COMPLETE ===\n")
+
+  # ============================================================================
+  # End of Jurisdiction Profile Implementation
+  # ============================================================================
+
   # Placeholder plots with basic functionality
   output$registration_methods_plot <- renderPlotly({
     tryCatch({
