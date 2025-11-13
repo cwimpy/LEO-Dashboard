@@ -1427,17 +1427,381 @@ server <- function(input, output, session) {
     })
   })
   
-  # Set remaining outputs to empty for now
-  output$active_inactive_plot <- renderPlotly({ plotly_empty() })
-  output$turnout_scatter <- renderPlotly({ plotly_empty() })
-  output$mail_return_by_state <- renderPlotly({ plotly_empty() })
-  output$mail_stats_table <- DT::renderDataTable({ data.frame() })
-  output$provisional_outcomes <- renderPlotly({ plotly_empty() })
-  output$provisional_by_state <- renderPlotly({ plotly_empty() })
-  output$poll_worker_ratio <- renderPlotly({ plotly_empty() })
-  output$polling_places_plot <- renderPlotly({ plotly_empty() })
-  output$uocava_return_rates <- renderPlotly({ plotly_empty() })
-  output$uocava_by_state <- renderPlotly({ plotly_empty() })
+  # ============================================================================
+  # COMPLETE ALL REMAINING VISUALIZATIONS
+  # ============================================================================
+
+  # 1. Active vs Inactive Registrations Plot (Registration Tab)
+  output$active_inactive_plot <- renderPlotly({
+    cat("=== RENDERING ACTIVE INACTIVE PLOT ===\n")
+    tryCatch({
+      if (is.null(data()) || is.null(data()$state_summary)) return(plotly_empty())
+
+      plot_data <- data()$state_summary %>%
+        filter(!is.na(total_active), !is.na(total_registered)) %>%
+        mutate(
+          total_inactive = total_registered - total_active,
+          active_pct = round((total_active / total_registered) * 100, 1)
+        ) %>%
+        arrange(desc(active_pct)) %>%
+        head(20)
+
+      if (nrow(plot_data) == 0) return(plotly_empty())
+
+      p <- plot_ly(plot_data, x = ~state_abbr, y = ~total_active, type = 'bar',
+                   name = 'Active', marker = list(color = '#5cb85c')) %>%
+        add_trace(y = ~total_inactive, name = 'Inactive',
+                 marker = list(color = '#d9534f')) %>%
+        layout(
+          title = "Active vs Inactive Registrations by State (Top 20)",
+          xaxis = list(title = "State"),
+          yaxis = list(title = "Number of Voters"),
+          barmode = 'stack',
+          showlegend = TRUE
+        )
+
+      cat("Active/Inactive plot created with", nrow(plot_data), "states\n")
+      return(p)
+
+    }, error = function(e) {
+      cat("ERROR in active_inactive_plot:", e$message, "\n")
+      plotly_empty()
+    })
+  })
+
+  # 2. Turnout vs Registration Scatterplot (Turnout Tab)
+  output$turnout_scatter <- renderPlotly({
+    cat("=== RENDERING TURNOUT SCATTER ===\n")
+    tryCatch({
+      if (is.null(data()) || is.null(data()$overview)) return(plotly_empty())
+
+      scatter_data <- data()$overview %>%
+        filter(!is.na(a1a), !is.na(f1a), !is.na(turnout_rate),
+               a1a > 0, f1a > 0, turnout_rate > 0, turnout_rate <= 100) %>%
+        mutate(
+          size_log = log10(a1a),
+          hover_text = paste0(jurisdiction_name, ", ", state_abbr,
+                            "\nRegistered: ", format(a1a, big.mark = ","),
+                            "\nTurnout: ", format(f1a, big.mark = ","),
+                            "\nRate: ", round(turnout_rate, 1), "%")
+        )
+
+      if (nrow(scatter_data) == 0) return(plotly_empty())
+
+      p <- plot_ly(scatter_data, x = ~a1a, y = ~f1a,
+                   type = 'scatter', mode = 'markers',
+                   marker = list(size = 5, opacity = 0.6,
+                               color = ~turnout_rate,
+                               colorscale = 'Viridis',
+                               showscale = TRUE,
+                               colorbar = list(title = "Turnout Rate (%)")),
+                   text = ~hover_text, hoverinfo = 'text') %>%
+        layout(
+          title = "Turnout vs Registered Voters",
+          xaxis = list(title = "Registered Voters", type = "log"),
+          yaxis = list(title = "Total Votes Cast", type = "log")
+        )
+
+      cat("Turnout scatter created with", nrow(scatter_data), "jurisdictions\n")
+      return(p)
+
+    }, error = function(e) {
+      cat("ERROR in turnout_scatter:", e$message, "\n")
+      plotly_empty()
+    })
+  })
+
+  # 3. Mail Return Rates by State (Mail Voting Tab)
+  output$mail_return_by_state <- renderPlotly({
+    cat("=== RENDERING MAIL RETURN BY STATE ===\n")
+    tryCatch({
+      if (is.null(data()) || is.null(data()$state_summary)) return(plotly_empty())
+
+      mail_data <- data()$state_summary %>%
+        filter(!is.na(state_mail_return_rate), state_mail_return_rate > 0) %>%
+        arrange(desc(state_mail_return_rate)) %>%
+        head(25)
+
+      if (nrow(mail_data) == 0) return(plotly_empty())
+
+      p <- plot_ly(mail_data, x = ~reorder(state_abbr, state_mail_return_rate),
+                   y = ~state_mail_return_rate, type = 'bar',
+                   marker = list(color = ~state_mail_return_rate,
+                               colorscale = 'Blues',
+                               showscale = FALSE)) %>%
+        layout(
+          title = "Mail Ballot Return Rates by State (Top 25)",
+          xaxis = list(title = "State"),
+          yaxis = list(title = "Return Rate (%)")
+        )
+
+      cat("Mail return by state plot created with", nrow(mail_data), "states\n")
+      return(p)
+
+    }, error = function(e) {
+      cat("ERROR in mail_return_by_state:", e$message, "\n")
+      plotly_empty()
+    })
+  })
+
+  # 4. Mail Voting Statistics Table (Mail Voting Tab)
+  output$mail_stats_table <- DT::renderDataTable({
+    cat("=== RENDERING MAIL STATS TABLE ===\n")
+    tryCatch({
+      if (is.null(data()) || is.null(data()$mail_voting)) {
+        cat("No mail voting data\n")
+        return(data.frame())
+      }
+
+      mail_summary <- data()$mail_voting %>%
+        filter(!is.na(state_abbr)) %>%
+        group_by(state_abbr) %>%
+        summarise(
+          Total_Sent = sum(c1a, na.rm = TRUE),
+          Total_Returned = sum(c1b, na.rm = TRUE),
+          Return_Rate = round((Total_Returned / Total_Sent) * 100, 1),
+          Jurisdictions = n(),
+          .groups = "drop"
+        ) %>%
+        filter(Total_Sent > 0) %>%
+        arrange(desc(Return_Rate)) %>%
+        mutate(
+          Total_Sent = format(Total_Sent, big.mark = ","),
+          Total_Returned = format(Total_Returned, big.mark = ",")
+        )
+
+      cat("Mail stats table created with", nrow(mail_summary), "states\n")
+      return(mail_summary)
+
+    }, error = function(e) {
+      cat("ERROR in mail_stats_table:", e$message, "\n")
+      data.frame()
+    })
+  }, options = list(pageLength = 10, scrollX = TRUE))
+
+  # 5. Provisional Ballot Outcomes (Provisional Tab)
+  output$provisional_outcomes <- renderPlotly({
+    cat("=== RENDERING PROVISIONAL OUTCOMES ===\n")
+    tryCatch({
+      if (is.null(data()) || is.null(data()$provisional)) return(plotly_empty())
+
+      prov_data <- data()$provisional %>%
+        filter(!is.na(e1a), e1a > 0) %>%
+        summarise(
+          Counted = sum(e1b, na.rm = TRUE),
+          Rejected = sum(e1c, na.rm = TRUE),
+          Other = sum(e1d, na.rm = TRUE)
+        ) %>%
+        pivot_longer(everything(), names_to = "Outcome", values_to = "Count") %>%
+        filter(Count > 0)
+
+      if (nrow(prov_data) == 0) return(plotly_empty())
+
+      p <- plot_ly(prov_data, labels = ~Outcome, values = ~Count, type = 'pie',
+                   marker = list(colors = c('#5cb85c', '#d9534f', '#f0ad4e'))) %>%
+        layout(title = "National Provisional Ballot Outcomes")
+
+      cat("Provisional outcomes created\n")
+      return(p)
+
+    }, error = function(e) {
+      cat("ERROR in provisional_outcomes:", e$message, "\n")
+      plotly_empty()
+    })
+  })
+
+  # 6. Provisional by State (Provisional Tab)
+  output$provisional_by_state <- renderPlotly({
+    cat("=== RENDERING PROVISIONAL BY STATE ===\n")
+    tryCatch({
+      if (is.null(data()) || is.null(data()$provisional)) return(plotly_empty())
+
+      prov_state <- data()$provisional %>%
+        filter(!is.na(state_abbr), !is.na(e1a), !is.na(e1b)) %>%
+        group_by(state_abbr) %>%
+        summarise(
+          Total_Cast = sum(e1a, na.rm = TRUE),
+          Total_Counted = sum(e1b, na.rm = TRUE),
+          Acceptance_Rate = round((Total_Counted / Total_Cast) * 100, 1),
+          .groups = "drop"
+        ) %>%
+        filter(Total_Cast >= 100) %>%
+        arrange(desc(Acceptance_Rate)) %>%
+        head(20)
+
+      if (nrow(prov_state) == 0) return(plotly_empty())
+
+      p <- plot_ly(prov_state, x = ~reorder(state_abbr, Acceptance_Rate),
+                   y = ~Acceptance_Rate, type = 'bar',
+                   marker = list(color = ~Acceptance_Rate,
+                               colorscale = 'Greens',
+                               showscale = FALSE)) %>%
+        layout(
+          title = "Provisional Ballot Acceptance Rates by State (Top 20)",
+          xaxis = list(title = "State"),
+          yaxis = list(title = "Acceptance Rate (%)")
+        )
+
+      cat("Provisional by state created with", nrow(prov_state), "states\n")
+      return(p)
+
+    }, error = function(e) {
+      cat("ERROR in provisional_by_state:", e$message, "\n")
+      plotly_empty()
+    })
+  })
+
+  # 7. Poll Worker Ratios (Polling Operations Tab)
+  output$poll_worker_ratio <- renderPlotly({
+    cat("=== RENDERING POLL WORKER RATIO ===\n")
+    tryCatch({
+      if (is.null(data()) || is.null(data()$polling)) return(plotly_empty())
+
+      worker_data <- data()$polling %>%
+        filter(!is.na(d3a), !is.na(f1a), d3a > 0, f1a > 0) %>%
+        mutate(
+          voters_per_worker = round(f1a / d3a, 1)
+        ) %>%
+        filter(voters_per_worker > 0, voters_per_worker < 1000) %>%
+        select(jurisdiction_name, state_abbr, voters_per_worker, d3a, f1a) %>%
+        arrange(voters_per_worker) %>%
+        head(30)
+
+      if (nrow(worker_data) == 0) return(plotly_empty())
+
+      p <- ggplot(worker_data, aes(x = reorder(paste0(jurisdiction_name, ", ", state_abbr),
+                                               voters_per_worker),
+                                   y = voters_per_worker)) +
+        geom_col(fill = "steelblue") +
+        coord_flip() +
+        labs(title = "Voters per Poll Worker (Top 30 Efficient)",
+             x = "", y = "Voters per Worker") +
+        theme_minimal() +
+        theme(axis.text.y = element_text(size = 7))
+
+      cat("Poll worker ratio created with", nrow(worker_data), "jurisdictions\n")
+      ggplotly(p)
+
+    }, error = function(e) {
+      cat("ERROR in poll_worker_ratio:", e$message, "\n")
+      plotly_empty()
+    })
+  })
+
+  # 8. Polling Places per Jurisdiction (Polling Operations Tab)
+  output$polling_places_plot <- renderPlotly({
+    cat("=== RENDERING POLLING PLACES PLOT ===\n")
+    tryCatch({
+      if (is.null(data()) || is.null(data()$polling)) return(plotly_empty())
+
+      places_data <- data()$polling %>%
+        filter(!is.na(d1a), d1a > 0) %>%
+        arrange(desc(d1a)) %>%
+        head(25) %>%
+        mutate(label = paste0(jurisdiction_name, ", ", state_abbr))
+
+      if (nrow(places_data) == 0) return(plotly_empty())
+
+      p <- plot_ly(places_data, x = ~reorder(label, d1a), y = ~d1a,
+                   type = 'bar', marker = list(color = 'rgb(158,202,225)')) %>%
+        layout(
+          title = "Number of Polling Places (Top 25 Jurisdictions)",
+          xaxis = list(title = ""),
+          yaxis = list(title = "Number of Polling Places"),
+          margin = list(l = 150)
+        ) %>%
+        layout(xaxis = list(tickangle = -45))
+
+      cat("Polling places plot created with", nrow(places_data), "jurisdictions\n")
+      return(p)
+
+    }, error = function(e) {
+      cat("ERROR in polling_places_plot:", e$message, "\n")
+      plotly_empty()
+    })
+  })
+
+  # 9. UOCAVA Return Rates (UOCAVA Tab)
+  output$uocava_return_rates <- renderPlotly({
+    cat("=== RENDERING UOCAVA RETURN RATES ===\n")
+    tryCatch({
+      if (is.null(data()) || is.null(data()$uocava)) return(plotly_empty())
+
+      uocava_data <- data()$uocava %>%
+        filter(!is.na(b1a), !is.na(b1b), b1a > 0) %>%
+        mutate(
+          return_rate = round((b1b / b1a) * 100, 1)
+        ) %>%
+        filter(return_rate > 0, return_rate <= 100) %>%
+        arrange(desc(return_rate)) %>%
+        head(30) %>%
+        mutate(label = paste0(jurisdiction_name, ", ", state_abbr))
+
+      if (nrow(uocava_data) == 0) return(plotly_empty())
+
+      p <- plot_ly(uocava_data, x = ~reorder(label, return_rate),
+                   y = ~return_rate, type = 'bar',
+                   marker = list(color = ~return_rate,
+                               colorscale = 'Oranges',
+                               showscale = FALSE)) %>%
+        layout(
+          title = "UOCAVA Ballot Return Rates (Top 30 Jurisdictions)",
+          xaxis = list(title = "", tickangle = -45),
+          yaxis = list(title = "Return Rate (%)"),
+          margin = list(b = 120)
+        )
+
+      cat("UOCAVA return rates created with", nrow(uocava_data), "jurisdictions\n")
+      return(p)
+
+    }, error = function(e) {
+      cat("ERROR in uocava_return_rates:", e$message, "\n")
+      plotly_empty()
+    })
+  })
+
+  # 10. UOCAVA by State (UOCAVA Tab)
+  output$uocava_by_state <- renderPlotly({
+    cat("=== RENDERING UOCAVA BY STATE ===\n")
+    tryCatch({
+      if (is.null(data()) || is.null(data()$uocava)) return(plotly_empty())
+
+      uocava_state <- data()$uocava %>%
+        filter(!is.na(state_abbr)) %>%
+        group_by(state_abbr) %>%
+        summarise(
+          Total_Sent = sum(b1a, na.rm = TRUE),
+          Total_Returned = sum(b1b, na.rm = TRUE),
+          Return_Rate = if_else(Total_Sent > 0,
+                               round((Total_Returned / Total_Sent) * 100, 1),
+                               NA_real_),
+          .groups = "drop"
+        ) %>%
+        filter(!is.na(Return_Rate), Total_Sent >= 50) %>%
+        arrange(desc(Return_Rate)) %>%
+        head(25)
+
+      if (nrow(uocava_state) == 0) return(plotly_empty())
+
+      p <- plot_ly(uocava_state, x = ~reorder(state_abbr, Return_Rate),
+                   y = ~Return_Rate, type = 'bar',
+                   marker = list(color = 'rgb(255,127,14)')) %>%
+        layout(
+          title = "UOCAVA Return Rates by State (Top 25)",
+          xaxis = list(title = "State"),
+          yaxis = list(title = "Return Rate (%)")
+        )
+
+      cat("UOCAVA by state created with", nrow(uocava_state), "states\n")
+      return(p)
+
+    }, error = function(e) {
+      cat("ERROR in uocava_by_state:", e$message, "\n")
+      plotly_empty()
+    })
+  })
+
+  cat("=== ALL VISUALIZATIONS COMPLETED ===\n")
   
   cat("=== ALL BASIC OUTPUTS CREATED ===\n")
   
