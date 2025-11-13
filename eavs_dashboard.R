@@ -323,11 +323,11 @@ ui <- dashboardPage(
                       actionButton("find_similar_demographics", "Similar Demographics", 
                                    class = "btn-warning", style = "margin: 5px;"),
                       br(),
-                      actionButton("find_similar_performance", "Similar Performance", 
+                      actionButton("find_similar_performance", "Similar Performance",
                                    class = "btn-warning", style = "margin: 5px;"),
                       br(),
                       hr(),
-                      div(id = "similar_jurisdictions_list")
+                      uiOutput("similar_jurisdictions_display")
                     )
                   )
                 ),
@@ -781,7 +781,576 @@ server <- function(input, output, session) {
   }, options = list(pageLength = 25, scrollX = TRUE))
   
   cat("=== ADDITIONAL TABS FUNCTIONALITY ADDED ===\n")
-  
+
+  # ============================================================================
+  # JURISDICTION PROFILE TAB - Complete Implementation
+  # ============================================================================
+
+  # Populate state dropdown for jurisdiction profile
+  observe({
+    cat("=== SETTING UP JURISDICTION PROFILE STATE FILTER ===\n")
+    tryCatch({
+      if (!is.null(data()) && !is.null(data()$jurisdiction)) {
+        states <- data()$jurisdiction %>%
+          select(state_abbr, state_full) %>%
+          distinct() %>%
+          arrange(state_abbr)
+
+        state_choices <- setNames(states$state_abbr, paste0(states$state_abbr, " - ", states$state_full))
+
+        cat("Profile states available:", length(state_choices), "\n")
+        updateSelectInput(session, "profile_state", choices = c("Select a state" = "", state_choices))
+      }
+    }, error = function(e) {
+      cat("ERROR setting up profile state filter:", e$message, "\n")
+    })
+  })
+
+  # Update jurisdiction dropdown based on selected state
+  observe({
+    cat("=== UPDATING JURISDICTION DROPDOWN ===\n")
+    tryCatch({
+      req(input$profile_state)
+
+      if (input$profile_state != "" && !is.null(data()) && !is.null(data()$jurisdiction)) {
+        jurisdictions <- data()$jurisdiction %>%
+          filter(state_abbr == input$profile_state) %>%
+          arrange(jurisdiction_name) %>%
+          select(fips_code, jurisdiction_name)
+
+        jurisdiction_choices <- setNames(jurisdictions$fips_code, jurisdictions$jurisdiction_name)
+
+        cat("Jurisdictions for", input$profile_state, ":", length(jurisdiction_choices), "\n")
+        updateSelectInput(session, "profile_jurisdiction",
+                         choices = c("Select a jurisdiction" = "", jurisdiction_choices))
+      } else {
+        updateSelectInput(session, "profile_jurisdiction", choices = c("Select a jurisdiction" = ""))
+      }
+    }, error = function(e) {
+      cat("ERROR updating jurisdiction dropdown:", e$message, "\n")
+    })
+  })
+
+  # Reactive expression for selected jurisdiction data
+  selected_jurisdiction <- reactive({
+    cat("=== GETTING SELECTED JURISDICTION DATA ===\n")
+    req(input$profile_jurisdiction, input$profile_jurisdiction != "")
+
+    tryCatch({
+      if (is.null(data()) || is.null(data()$jurisdiction)) {
+        cat("No jurisdiction data available\n")
+        return(NULL)
+      }
+
+      jurisdiction_data <- data()$jurisdiction %>%
+        filter(fips_code == input$profile_jurisdiction)
+
+      if (nrow(jurisdiction_data) == 0) {
+        cat("No data found for FIPS code:", input$profile_jurisdiction, "\n")
+        return(NULL)
+      }
+
+      cat("Selected jurisdiction:", jurisdiction_data$jurisdiction_name[1], "\n")
+      return(jurisdiction_data)
+
+    }, error = function(e) {
+      cat("ERROR getting jurisdiction data:", e$message, "\n")
+      return(NULL)
+    })
+  })
+
+  # Value boxes for jurisdiction profile
+  output$jurisdiction_registered <- renderValueBox({
+    cat("=== RENDERING JURISDICTION REGISTERED ===\n")
+    tryCatch({
+      juris <- selected_jurisdiction()
+      req(juris)
+
+      registered <- juris$a1a
+      if (is.na(registered)) registered <- 0
+
+      valueBox(
+        value = format(registered, big.mark = ","),
+        subtitle = "Total Registered Voters",
+        icon = icon("users"),
+        color = "blue"
+      )
+    }, error = function(e) {
+      cat("ERROR in jurisdiction_registered:", e$message, "\n")
+      valueBox("N/A", "Registered Voters", icon = icon("exclamation"), color = "red")
+    })
+  })
+
+  output$jurisdiction_turnout <- renderValueBox({
+    cat("=== RENDERING JURISDICTION TURNOUT ===\n")
+    tryCatch({
+      juris <- selected_jurisdiction()
+      req(juris)
+
+      # Calculate turnout rate
+      turnout_rate <- if (!is.na(juris$turnout_rate)) {
+        paste0(round(juris$turnout_rate, 1), "%")
+      } else if (!is.na(juris$f1a) && !is.na(juris$a1a) && juris$a1a > 0) {
+        paste0(round((juris$f1a / juris$a1a) * 100, 1), "%")
+      } else {
+        "N/A"
+      }
+
+      valueBox(
+        value = turnout_rate,
+        subtitle = "Turnout Rate",
+        icon = icon("vote-yea"),
+        color = "green"
+      )
+    }, error = function(e) {
+      cat("ERROR in jurisdiction_turnout:", e$message, "\n")
+      valueBox("N/A", "Turnout Rate", icon = icon("exclamation"), color = "red")
+    })
+  })
+
+  output$jurisdiction_mail_rate <- renderValueBox({
+    cat("=== RENDERING JURISDICTION MAIL RATE ===\n")
+    tryCatch({
+      juris <- selected_jurisdiction()
+      req(juris)
+
+      # Calculate mail return rate
+      mail_rate <- if (!is.na(juris$mail_return_rate)) {
+        paste0(round(juris$mail_return_rate, 1), "%")
+      } else if (!is.na(juris$c1b) && !is.na(juris$c1a) && juris$c1a > 0) {
+        paste0(round((juris$c1b / juris$c1a) * 100, 1), "%")
+      } else {
+        "N/A"
+      }
+
+      valueBox(
+        value = mail_rate,
+        subtitle = "Mail Return Rate",
+        icon = icon("envelope"),
+        color = "yellow"
+      )
+    }, error = function(e) {
+      cat("ERROR in jurisdiction_mail_rate:", e$message, "\n")
+      valueBox("N/A", "Mail Return Rate", icon = icon("exclamation"), color = "red")
+    })
+  })
+
+  output$jurisdiction_size_category <- renderValueBox({
+    cat("=== RENDERING JURISDICTION SIZE CATEGORY ===\n")
+    tryCatch({
+      juris <- selected_jurisdiction()
+      req(juris)
+
+      size_category <- if (!is.na(juris$jurisdiction_size)) {
+        juris$jurisdiction_size
+      } else {
+        "Unknown"
+      }
+
+      valueBox(
+        value = size_category,
+        subtitle = "Jurisdiction Size",
+        icon = icon("chart-bar"),
+        color = "purple"
+      )
+    }, error = function(e) {
+      cat("ERROR in jurisdiction_size_category:", e$message, "\n")
+      valueBox("Unknown", "Jurisdiction Size", icon = icon("exclamation"), color = "red")
+    })
+  })
+
+  # Registration details table
+  output$jurisdiction_registration_table <- renderTable({
+    cat("=== RENDERING JURISDICTION REGISTRATION TABLE ===\n")
+    tryCatch({
+      juris <- selected_jurisdiction()
+      req(juris)
+
+      data.frame(
+        Metric = c("Total Registered", "Active Voters", "Inactive Voters",
+                   "Online Registration", "Mail Registration", "DMV Registration"),
+        Value = c(
+          format(ifelse(is.na(juris$a1a), 0, juris$a1a), big.mark = ","),
+          format(ifelse(is.na(juris$a1b), 0, juris$a1b), big.mark = ","),
+          format(ifelse(is.na(juris$a1c), 0, juris$a1c), big.mark = ","),
+          format(ifelse(is.na(juris$a4c), 0, juris$a4c), big.mark = ","),
+          format(ifelse(is.na(juris$a4a), 0, juris$a4a), big.mark = ","),
+          format(ifelse(is.na(juris$a4e), 0, juris$a4e), big.mark = ",")
+        ),
+        stringsAsFactors = FALSE
+      )
+    }, error = function(e) {
+      cat("ERROR in jurisdiction_registration_table:", e$message, "\n")
+      data.frame(Metric = "Error", Value = "Unable to load data")
+    })
+  }, striped = TRUE, hover = TRUE, width = "100%")
+
+  # Voting methods breakdown chart
+  output$jurisdiction_voting_methods <- renderPlotly({
+    cat("=== RENDERING JURISDICTION VOTING METHODS ===\n")
+    tryCatch({
+      juris <- selected_jurisdiction()
+      req(juris)
+
+      # Create voting methods data
+      methods_data <- data.frame(
+        Method = c("In-Person on Election Day", "Mail/Absentee", "Early In-Person", "Provisional"),
+        Count = c(
+          ifelse(is.na(juris$f1b), 0, juris$f1b),
+          ifelse(is.na(juris$f1c), 0, juris$f1c),
+          ifelse(is.na(juris$f1d), 0, juris$f1d),
+          ifelse(is.na(juris$e1a), 0, juris$e1a)
+        )
+      ) %>%
+        filter(Count > 0)
+
+      if (nrow(methods_data) == 0) {
+        return(plotly_empty())
+      }
+
+      p <- ggplot(methods_data, aes(x = reorder(Method, Count), y = Count, fill = Method)) +
+        geom_col() +
+        coord_flip() +
+        labs(title = "Voting Methods Breakdown", x = "", y = "Number of Votes") +
+        theme_minimal() +
+        theme(legend.position = "none") +
+        scale_y_continuous(labels = scales::comma)
+
+      ggplotly(p)
+    }, error = function(e) {
+      cat("ERROR in jurisdiction_voting_methods:", e$message, "\n")
+      plotly_empty()
+    })
+  })
+
+  # Mail voting performance table
+  output$jurisdiction_mail_table <- renderTable({
+    cat("=== RENDERING JURISDICTION MAIL TABLE ===\n")
+    tryCatch({
+      juris <- selected_jurisdiction()
+      req(juris)
+
+      mail_sent <- ifelse(is.na(juris$c1a), 0, juris$c1a)
+      mail_returned <- ifelse(is.na(juris$c1b), 0, juris$c1b)
+      mail_counted <- ifelse(is.na(juris$c8a), 0, juris$c8a)
+
+      return_rate <- if (mail_sent > 0) paste0(round((mail_returned/mail_sent)*100, 1), "%") else "N/A"
+      acceptance_rate <- if (mail_returned > 0) paste0(round((mail_counted/mail_returned)*100, 1), "%") else "N/A"
+
+      data.frame(
+        Metric = c("Ballots Sent", "Ballots Returned", "Ballots Counted",
+                   "Return Rate", "Acceptance Rate"),
+        Value = c(
+          format(mail_sent, big.mark = ","),
+          format(mail_returned, big.mark = ","),
+          format(mail_counted, big.mark = ","),
+          return_rate,
+          acceptance_rate
+        ),
+        stringsAsFactors = FALSE
+      )
+    }, error = function(e) {
+      cat("ERROR in jurisdiction_mail_table:", e$message, "\n")
+      data.frame(Metric = "Error", Value = "Unable to load data")
+    })
+  }, striped = TRUE, hover = TRUE, width = "100%")
+
+  # Provisional ballots table
+  output$jurisdiction_provisional_table <- renderTable({
+    cat("=== RENDERING JURISDICTION PROVISIONAL TABLE ===\n")
+    tryCatch({
+      juris <- selected_jurisdiction()
+      req(juris)
+
+      prov_cast <- ifelse(is.na(juris$e1a), 0, juris$e1a)
+      prov_counted <- ifelse(is.na(juris$e1b), 0, juris$e1b)
+      prov_rejected <- ifelse(is.na(juris$e1c), 0, juris$e1c)
+
+      acceptance_rate <- if (prov_cast > 0) paste0(round((prov_counted/prov_cast)*100, 1), "%") else "N/A"
+
+      data.frame(
+        Metric = c("Provisional Cast", "Counted", "Rejected", "Acceptance Rate"),
+        Value = c(
+          format(prov_cast, big.mark = ","),
+          format(prov_counted, big.mark = ","),
+          format(prov_rejected, big.mark = ","),
+          acceptance_rate
+        ),
+        stringsAsFactors = FALSE
+      )
+    }, error = function(e) {
+      cat("ERROR in jurisdiction_provisional_table:", e$message, "\n")
+      data.frame(Metric = "Error", Value = "Unable to load data")
+    })
+  }, striped = TRUE, hover = TRUE, width = "100%")
+
+  # Complete jurisdiction data table
+  output$jurisdiction_complete_data <- DT::renderDataTable({
+    cat("=== RENDERING COMPLETE JURISDICTION DATA ===\n")
+    tryCatch({
+      juris <- selected_jurisdiction()
+      req(juris)
+
+      # Transpose the data for better viewing
+      juris_t <- data.frame(
+        Variable = names(juris),
+        Value = as.character(t(juris)[,1]),
+        stringsAsFactors = FALSE
+      )
+
+      return(juris_t)
+    }, error = function(e) {
+      cat("ERROR in jurisdiction_complete_data:", e$message, "\n")
+      data.frame(Variable = "Error", Value = "Unable to load data")
+    })
+  }, options = list(pageLength = 25, scrollX = TRUE, scrollY = "300px"))
+
+  # ============================================================================
+  # SIMILAR JURISDICTIONS FUNCTIONALITY
+  # ============================================================================
+
+  # Reactive value to store similar jurisdictions
+  similar_jurisdictions <- reactiveVal(NULL)
+  similar_method <- reactiveVal(NULL)
+
+  # Find similar jurisdictions by size
+  observeEvent(input$find_similar_size, {
+    cat("=== FINDING SIMILAR JURISDICTIONS BY SIZE ===\n")
+    tryCatch({
+      juris <- selected_jurisdiction()
+      req(juris)
+
+      if (is.null(data()) || is.null(data()$jurisdiction)) {
+        cat("No jurisdiction data available\n")
+        return()
+      }
+
+      target_registered <- juris$a1a
+      if (is.na(target_registered) || target_registered == 0) {
+        similar_jurisdictions(data.frame())
+        similar_method("size_error")
+        return()
+      }
+
+      cat("Target registered voters:", target_registered, "\n")
+
+      # Find jurisdictions within 20% of target size
+      lower_bound <- target_registered * 0.8
+      upper_bound <- target_registered * 1.2
+
+      similar <- data()$jurisdiction %>%
+        filter(
+          fips_code != juris$fips_code,  # Exclude current jurisdiction
+          !is.na(a1a),
+          a1a >= lower_bound,
+          a1a <= upper_bound
+        ) %>%
+        mutate(
+          size_difference = abs(a1a - target_registered),
+          size_diff_pct = round((size_difference / target_registered) * 100, 1)
+        ) %>%
+        arrange(size_difference) %>%
+        head(10) %>%
+        select(jurisdiction_name, state_abbr, a1a, size_diff_pct, turnout_rate, mail_return_rate)
+
+      cat("Found", nrow(similar), "similar jurisdictions by size\n")
+
+      similar_jurisdictions(similar)
+      similar_method("size")
+
+    }, error = function(e) {
+      cat("ERROR finding similar jurisdictions by size:", e$message, "\n")
+      similar_jurisdictions(data.frame())
+      similar_method("error")
+    })
+  })
+
+  # Find similar jurisdictions by demographics
+  observeEvent(input$find_similar_demographics, {
+    cat("=== FINDING SIMILAR JURISDICTIONS BY DEMOGRAPHICS ===\n")
+    tryCatch({
+      juris <- selected_jurisdiction()
+      req(juris)
+
+      if (is.null(data()) || is.null(data()$jurisdiction)) {
+        cat("No jurisdiction data available\n")
+        return()
+      }
+
+      target_region <- juris$region
+      target_size_category <- juris$jurisdiction_size
+
+      if (is.na(target_region) && is.na(target_size_category)) {
+        similar_jurisdictions(data.frame())
+        similar_method("demographics_error")
+        return()
+      }
+
+      cat("Target region:", target_region, "Target size category:", target_size_category, "\n")
+
+      # Find jurisdictions in same region and size category
+      similar <- data()$jurisdiction %>%
+        filter(fips_code != juris$fips_code) %>%
+        mutate(
+          region_match = ifelse(!is.na(region) & !is.na(target_region) & region == target_region, 1, 0),
+          size_match = ifelse(!is.na(jurisdiction_size) & !is.na(target_size_category) &
+                             jurisdiction_size == target_size_category, 1, 0),
+          match_score = region_match + size_match
+        ) %>%
+        filter(match_score > 0) %>%
+        arrange(desc(match_score), jurisdiction_name) %>%
+        head(10) %>%
+        select(jurisdiction_name, state_abbr, region, jurisdiction_size, a1a, turnout_rate, match_score)
+
+      cat("Found", nrow(similar), "similar jurisdictions by demographics\n")
+
+      similar_jurisdictions(similar)
+      similar_method("demographics")
+
+    }, error = function(e) {
+      cat("ERROR finding similar jurisdictions by demographics:", e$message, "\n")
+      similar_jurisdictions(data.frame())
+      similar_method("error")
+    })
+  })
+
+  # Find similar jurisdictions by performance
+  observeEvent(input$find_similar_performance, {
+    cat("=== FINDING SIMILAR JURISDICTIONS BY PERFORMANCE ===\n")
+    tryCatch({
+      juris <- selected_jurisdiction()
+      req(juris)
+
+      if (is.null(data()) || is.null(data()$jurisdiction)) {
+        cat("No jurisdiction data available\n")
+        return()
+      }
+
+      target_turnout <- juris$turnout_rate
+      target_mail_return <- juris$mail_return_rate
+
+      if (is.na(target_turnout) && is.na(target_mail_return)) {
+        similar_jurisdictions(data.frame())
+        similar_method("performance_error")
+        return()
+      }
+
+      cat("Target turnout:", target_turnout, "Target mail return:", target_mail_return, "\n")
+
+      # Calculate performance similarity score
+      similar <- data()$jurisdiction %>%
+        filter(
+          fips_code != juris$fips_code,
+          !is.na(turnout_rate) | !is.na(mail_return_rate)
+        ) %>%
+        mutate(
+          turnout_diff = ifelse(!is.na(turnout_rate) & !is.na(target_turnout),
+                               abs(turnout_rate - target_turnout), NA),
+          mail_diff = ifelse(!is.na(mail_return_rate) & !is.na(target_mail_return),
+                            abs(mail_return_rate - target_mail_return), NA),
+          # Combined performance score (lower is better)
+          perf_score = ifelse(!is.na(turnout_diff) & !is.na(mail_diff),
+                             (turnout_diff + mail_diff) / 2,
+                             ifelse(!is.na(turnout_diff), turnout_diff, mail_diff))
+        ) %>%
+        filter(!is.na(perf_score)) %>%
+        arrange(perf_score) %>%
+        head(10) %>%
+        select(jurisdiction_name, state_abbr, turnout_rate, mail_return_rate,
+               jurisdiction_size, a1a, perf_score)
+
+      cat("Found", nrow(similar), "similar jurisdictions by performance\n")
+
+      similar_jurisdictions(similar)
+      similar_method("performance")
+
+    }, error = function(e) {
+      cat("ERROR finding similar jurisdictions by performance:", e$message, "\n")
+      similar_jurisdictions(data.frame())
+      similar_method("error")
+    })
+  })
+
+  # Display similar jurisdictions
+  output$similar_jurisdictions_display <- renderUI({
+    cat("=== RENDERING SIMILAR JURISDICTIONS DISPLAY ===\n")
+
+    method <- similar_method()
+    similar <- similar_jurisdictions()
+
+    if (is.null(method)) {
+      return(div(
+        style = "text-align: left; padding: 10px; font-size: 12px; color: #666;",
+        p("Click a button above to find similar jurisdictions")
+      ))
+    }
+
+    if (method == "error" || method == "size_error" ||
+        method == "demographics_error" || method == "performance_error") {
+      return(div(
+        style = "text-align: left; padding: 10px; font-size: 12px; color: #d9534f;",
+        p(strong("Unable to find similar jurisdictions")),
+        p("Insufficient data for comparison")
+      ))
+    }
+
+    if (is.null(similar) || nrow(similar) == 0) {
+      return(div(
+        style = "text-align: left; padding: 10px; font-size: 12px; color: #666;",
+        p("No similar jurisdictions found")
+      ))
+    }
+
+    # Create display based on method
+    if (method == "size") {
+      jurisdiction_items <- lapply(1:nrow(similar), function(i) {
+        tags$div(
+          style = "padding: 5px; border-bottom: 1px solid #eee;",
+          tags$strong(paste0(similar$jurisdiction_name[i], ", ", similar$state_abbr[i])),
+          tags$br(),
+          tags$small(
+            paste0("Registered: ", format(similar$a1a[i], big.mark = ","),
+                   " (", similar$size_diff_pct[i], "% diff)")
+          )
+        )
+      })
+    } else if (method == "demographics") {
+      jurisdiction_items <- lapply(1:nrow(similar), function(i) {
+        tags$div(
+          style = "padding: 5px; border-bottom: 1px solid #eee;",
+          tags$strong(paste0(similar$jurisdiction_name[i], ", ", similar$state_abbr[i])),
+          tags$br(),
+          tags$small(
+            paste0(similar$region[i], " | ", similar$jurisdiction_size[i])
+          )
+        )
+      })
+    } else if (method == "performance") {
+      jurisdiction_items <- lapply(1:nrow(similar), function(i) {
+        tags$div(
+          style = "padding: 5px; border-bottom: 1px solid #eee;",
+          tags$strong(paste0(similar$jurisdiction_name[i], ", ", similar$state_abbr[i])),
+          tags$br(),
+          tags$small(
+            paste0("Turnout: ", round(similar$turnout_rate[i], 1), "% | ",
+                   "Mail Return: ", round(similar$mail_return_rate[i], 1), "%")
+          )
+        )
+      })
+    }
+
+    return(div(
+      style = "text-align: left; max-height: 180px; overflow-y: auto; font-size: 11px;",
+      jurisdiction_items
+    ))
+  })
+
+  cat("=== JURISDICTION PROFILE TAB COMPLETE ===\n")
+
+  # ============================================================================
+  # End of Jurisdiction Profile Implementation
+  # ============================================================================
+
   # Placeholder plots with basic functionality
   output$registration_methods_plot <- renderPlotly({
     tryCatch({
@@ -858,17 +1427,381 @@ server <- function(input, output, session) {
     })
   })
   
-  # Set remaining outputs to empty for now
-  output$active_inactive_plot <- renderPlotly({ plotly_empty() })
-  output$turnout_scatter <- renderPlotly({ plotly_empty() })
-  output$mail_return_by_state <- renderPlotly({ plotly_empty() })
-  output$mail_stats_table <- DT::renderDataTable({ data.frame() })
-  output$provisional_outcomes <- renderPlotly({ plotly_empty() })
-  output$provisional_by_state <- renderPlotly({ plotly_empty() })
-  output$poll_worker_ratio <- renderPlotly({ plotly_empty() })
-  output$polling_places_plot <- renderPlotly({ plotly_empty() })
-  output$uocava_return_rates <- renderPlotly({ plotly_empty() })
-  output$uocava_by_state <- renderPlotly({ plotly_empty() })
+  # ============================================================================
+  # COMPLETE ALL REMAINING VISUALIZATIONS
+  # ============================================================================
+
+  # 1. Active vs Inactive Registrations Plot (Registration Tab)
+  output$active_inactive_plot <- renderPlotly({
+    cat("=== RENDERING ACTIVE INACTIVE PLOT ===\n")
+    tryCatch({
+      if (is.null(data()) || is.null(data()$state_summary)) return(plotly_empty())
+
+      plot_data <- data()$state_summary %>%
+        filter(!is.na(total_active), !is.na(total_registered)) %>%
+        mutate(
+          total_inactive = total_registered - total_active,
+          active_pct = round((total_active / total_registered) * 100, 1)
+        ) %>%
+        arrange(desc(active_pct)) %>%
+        head(20)
+
+      if (nrow(plot_data) == 0) return(plotly_empty())
+
+      p <- plot_ly(plot_data, x = ~state_abbr, y = ~total_active, type = 'bar',
+                   name = 'Active', marker = list(color = '#5cb85c')) %>%
+        add_trace(y = ~total_inactive, name = 'Inactive',
+                 marker = list(color = '#d9534f')) %>%
+        layout(
+          title = "Active vs Inactive Registrations by State (Top 20)",
+          xaxis = list(title = "State"),
+          yaxis = list(title = "Number of Voters"),
+          barmode = 'stack',
+          showlegend = TRUE
+        )
+
+      cat("Active/Inactive plot created with", nrow(plot_data), "states\n")
+      return(p)
+
+    }, error = function(e) {
+      cat("ERROR in active_inactive_plot:", e$message, "\n")
+      plotly_empty()
+    })
+  })
+
+  # 2. Turnout vs Registration Scatterplot (Turnout Tab)
+  output$turnout_scatter <- renderPlotly({
+    cat("=== RENDERING TURNOUT SCATTER ===\n")
+    tryCatch({
+      if (is.null(data()) || is.null(data()$overview)) return(plotly_empty())
+
+      scatter_data <- data()$overview %>%
+        filter(!is.na(a1a), !is.na(f1a), !is.na(turnout_rate),
+               a1a > 0, f1a > 0, turnout_rate > 0, turnout_rate <= 100) %>%
+        mutate(
+          size_log = log10(a1a),
+          hover_text = paste0(jurisdiction_name, ", ", state_abbr,
+                            "\nRegistered: ", format(a1a, big.mark = ","),
+                            "\nTurnout: ", format(f1a, big.mark = ","),
+                            "\nRate: ", round(turnout_rate, 1), "%")
+        )
+
+      if (nrow(scatter_data) == 0) return(plotly_empty())
+
+      p <- plot_ly(scatter_data, x = ~a1a, y = ~f1a,
+                   type = 'scatter', mode = 'markers',
+                   marker = list(size = 5, opacity = 0.6,
+                               color = ~turnout_rate,
+                               colorscale = 'Viridis',
+                               showscale = TRUE,
+                               colorbar = list(title = "Turnout Rate (%)")),
+                   text = ~hover_text, hoverinfo = 'text') %>%
+        layout(
+          title = "Turnout vs Registered Voters",
+          xaxis = list(title = "Registered Voters", type = "log"),
+          yaxis = list(title = "Total Votes Cast", type = "log")
+        )
+
+      cat("Turnout scatter created with", nrow(scatter_data), "jurisdictions\n")
+      return(p)
+
+    }, error = function(e) {
+      cat("ERROR in turnout_scatter:", e$message, "\n")
+      plotly_empty()
+    })
+  })
+
+  # 3. Mail Return Rates by State (Mail Voting Tab)
+  output$mail_return_by_state <- renderPlotly({
+    cat("=== RENDERING MAIL RETURN BY STATE ===\n")
+    tryCatch({
+      if (is.null(data()) || is.null(data()$state_summary)) return(plotly_empty())
+
+      mail_data <- data()$state_summary %>%
+        filter(!is.na(state_mail_return_rate), state_mail_return_rate > 0) %>%
+        arrange(desc(state_mail_return_rate)) %>%
+        head(25)
+
+      if (nrow(mail_data) == 0) return(plotly_empty())
+
+      p <- plot_ly(mail_data, x = ~reorder(state_abbr, state_mail_return_rate),
+                   y = ~state_mail_return_rate, type = 'bar',
+                   marker = list(color = ~state_mail_return_rate,
+                               colorscale = 'Blues',
+                               showscale = FALSE)) %>%
+        layout(
+          title = "Mail Ballot Return Rates by State (Top 25)",
+          xaxis = list(title = "State"),
+          yaxis = list(title = "Return Rate (%)")
+        )
+
+      cat("Mail return by state plot created with", nrow(mail_data), "states\n")
+      return(p)
+
+    }, error = function(e) {
+      cat("ERROR in mail_return_by_state:", e$message, "\n")
+      plotly_empty()
+    })
+  })
+
+  # 4. Mail Voting Statistics Table (Mail Voting Tab)
+  output$mail_stats_table <- DT::renderDataTable({
+    cat("=== RENDERING MAIL STATS TABLE ===\n")
+    tryCatch({
+      if (is.null(data()) || is.null(data()$mail_voting)) {
+        cat("No mail voting data\n")
+        return(data.frame())
+      }
+
+      mail_summary <- data()$mail_voting %>%
+        filter(!is.na(state_abbr)) %>%
+        group_by(state_abbr) %>%
+        summarise(
+          Total_Sent = sum(c1a, na.rm = TRUE),
+          Total_Returned = sum(c1b, na.rm = TRUE),
+          Return_Rate = round((Total_Returned / Total_Sent) * 100, 1),
+          Jurisdictions = n(),
+          .groups = "drop"
+        ) %>%
+        filter(Total_Sent > 0) %>%
+        arrange(desc(Return_Rate)) %>%
+        mutate(
+          Total_Sent = format(Total_Sent, big.mark = ","),
+          Total_Returned = format(Total_Returned, big.mark = ",")
+        )
+
+      cat("Mail stats table created with", nrow(mail_summary), "states\n")
+      return(mail_summary)
+
+    }, error = function(e) {
+      cat("ERROR in mail_stats_table:", e$message, "\n")
+      data.frame()
+    })
+  }, options = list(pageLength = 10, scrollX = TRUE))
+
+  # 5. Provisional Ballot Outcomes (Provisional Tab)
+  output$provisional_outcomes <- renderPlotly({
+    cat("=== RENDERING PROVISIONAL OUTCOMES ===\n")
+    tryCatch({
+      if (is.null(data()) || is.null(data()$provisional)) return(plotly_empty())
+
+      prov_data <- data()$provisional %>%
+        filter(!is.na(e1a), e1a > 0) %>%
+        summarise(
+          Counted = sum(e1b, na.rm = TRUE),
+          Rejected = sum(e1c, na.rm = TRUE),
+          Other = sum(e1d, na.rm = TRUE)
+        ) %>%
+        pivot_longer(everything(), names_to = "Outcome", values_to = "Count") %>%
+        filter(Count > 0)
+
+      if (nrow(prov_data) == 0) return(plotly_empty())
+
+      p <- plot_ly(prov_data, labels = ~Outcome, values = ~Count, type = 'pie',
+                   marker = list(colors = c('#5cb85c', '#d9534f', '#f0ad4e'))) %>%
+        layout(title = "National Provisional Ballot Outcomes")
+
+      cat("Provisional outcomes created\n")
+      return(p)
+
+    }, error = function(e) {
+      cat("ERROR in provisional_outcomes:", e$message, "\n")
+      plotly_empty()
+    })
+  })
+
+  # 6. Provisional by State (Provisional Tab)
+  output$provisional_by_state <- renderPlotly({
+    cat("=== RENDERING PROVISIONAL BY STATE ===\n")
+    tryCatch({
+      if (is.null(data()) || is.null(data()$provisional)) return(plotly_empty())
+
+      prov_state <- data()$provisional %>%
+        filter(!is.na(state_abbr), !is.na(e1a), !is.na(e1b)) %>%
+        group_by(state_abbr) %>%
+        summarise(
+          Total_Cast = sum(e1a, na.rm = TRUE),
+          Total_Counted = sum(e1b, na.rm = TRUE),
+          Acceptance_Rate = round((Total_Counted / Total_Cast) * 100, 1),
+          .groups = "drop"
+        ) %>%
+        filter(Total_Cast >= 100) %>%
+        arrange(desc(Acceptance_Rate)) %>%
+        head(20)
+
+      if (nrow(prov_state) == 0) return(plotly_empty())
+
+      p <- plot_ly(prov_state, x = ~reorder(state_abbr, Acceptance_Rate),
+                   y = ~Acceptance_Rate, type = 'bar',
+                   marker = list(color = ~Acceptance_Rate,
+                               colorscale = 'Greens',
+                               showscale = FALSE)) %>%
+        layout(
+          title = "Provisional Ballot Acceptance Rates by State (Top 20)",
+          xaxis = list(title = "State"),
+          yaxis = list(title = "Acceptance Rate (%)")
+        )
+
+      cat("Provisional by state created with", nrow(prov_state), "states\n")
+      return(p)
+
+    }, error = function(e) {
+      cat("ERROR in provisional_by_state:", e$message, "\n")
+      plotly_empty()
+    })
+  })
+
+  # 7. Poll Worker Ratios (Polling Operations Tab)
+  output$poll_worker_ratio <- renderPlotly({
+    cat("=== RENDERING POLL WORKER RATIO ===\n")
+    tryCatch({
+      if (is.null(data()) || is.null(data()$polling)) return(plotly_empty())
+
+      worker_data <- data()$polling %>%
+        filter(!is.na(d3a), !is.na(f1a), d3a > 0, f1a > 0) %>%
+        mutate(
+          voters_per_worker = round(f1a / d3a, 1)
+        ) %>%
+        filter(voters_per_worker > 0, voters_per_worker < 1000) %>%
+        select(jurisdiction_name, state_abbr, voters_per_worker, d3a, f1a) %>%
+        arrange(voters_per_worker) %>%
+        head(30)
+
+      if (nrow(worker_data) == 0) return(plotly_empty())
+
+      p <- ggplot(worker_data, aes(x = reorder(paste0(jurisdiction_name, ", ", state_abbr),
+                                               voters_per_worker),
+                                   y = voters_per_worker)) +
+        geom_col(fill = "steelblue") +
+        coord_flip() +
+        labs(title = "Voters per Poll Worker (Top 30 Efficient)",
+             x = "", y = "Voters per Worker") +
+        theme_minimal() +
+        theme(axis.text.y = element_text(size = 7))
+
+      cat("Poll worker ratio created with", nrow(worker_data), "jurisdictions\n")
+      ggplotly(p)
+
+    }, error = function(e) {
+      cat("ERROR in poll_worker_ratio:", e$message, "\n")
+      plotly_empty()
+    })
+  })
+
+  # 8. Polling Places per Jurisdiction (Polling Operations Tab)
+  output$polling_places_plot <- renderPlotly({
+    cat("=== RENDERING POLLING PLACES PLOT ===\n")
+    tryCatch({
+      if (is.null(data()) || is.null(data()$polling)) return(plotly_empty())
+
+      places_data <- data()$polling %>%
+        filter(!is.na(d1a), d1a > 0) %>%
+        arrange(desc(d1a)) %>%
+        head(25) %>%
+        mutate(label = paste0(jurisdiction_name, ", ", state_abbr))
+
+      if (nrow(places_data) == 0) return(plotly_empty())
+
+      p <- plot_ly(places_data, x = ~reorder(label, d1a), y = ~d1a,
+                   type = 'bar', marker = list(color = 'rgb(158,202,225)')) %>%
+        layout(
+          title = "Number of Polling Places (Top 25 Jurisdictions)",
+          xaxis = list(title = ""),
+          yaxis = list(title = "Number of Polling Places"),
+          margin = list(l = 150)
+        ) %>%
+        layout(xaxis = list(tickangle = -45))
+
+      cat("Polling places plot created with", nrow(places_data), "jurisdictions\n")
+      return(p)
+
+    }, error = function(e) {
+      cat("ERROR in polling_places_plot:", e$message, "\n")
+      plotly_empty()
+    })
+  })
+
+  # 9. UOCAVA Return Rates (UOCAVA Tab)
+  output$uocava_return_rates <- renderPlotly({
+    cat("=== RENDERING UOCAVA RETURN RATES ===\n")
+    tryCatch({
+      if (is.null(data()) || is.null(data()$uocava)) return(plotly_empty())
+
+      uocava_data <- data()$uocava %>%
+        filter(!is.na(b1a), !is.na(b1b), b1a > 0) %>%
+        mutate(
+          return_rate = round((b1b / b1a) * 100, 1)
+        ) %>%
+        filter(return_rate > 0, return_rate <= 100) %>%
+        arrange(desc(return_rate)) %>%
+        head(30) %>%
+        mutate(label = paste0(jurisdiction_name, ", ", state_abbr))
+
+      if (nrow(uocava_data) == 0) return(plotly_empty())
+
+      p <- plot_ly(uocava_data, x = ~reorder(label, return_rate),
+                   y = ~return_rate, type = 'bar',
+                   marker = list(color = ~return_rate,
+                               colorscale = 'Oranges',
+                               showscale = FALSE)) %>%
+        layout(
+          title = "UOCAVA Ballot Return Rates (Top 30 Jurisdictions)",
+          xaxis = list(title = "", tickangle = -45),
+          yaxis = list(title = "Return Rate (%)"),
+          margin = list(b = 120)
+        )
+
+      cat("UOCAVA return rates created with", nrow(uocava_data), "jurisdictions\n")
+      return(p)
+
+    }, error = function(e) {
+      cat("ERROR in uocava_return_rates:", e$message, "\n")
+      plotly_empty()
+    })
+  })
+
+  # 10. UOCAVA by State (UOCAVA Tab)
+  output$uocava_by_state <- renderPlotly({
+    cat("=== RENDERING UOCAVA BY STATE ===\n")
+    tryCatch({
+      if (is.null(data()) || is.null(data()$uocava)) return(plotly_empty())
+
+      uocava_state <- data()$uocava %>%
+        filter(!is.na(state_abbr)) %>%
+        group_by(state_abbr) %>%
+        summarise(
+          Total_Sent = sum(b1a, na.rm = TRUE),
+          Total_Returned = sum(b1b, na.rm = TRUE),
+          Return_Rate = if_else(Total_Sent > 0,
+                               round((Total_Returned / Total_Sent) * 100, 1),
+                               NA_real_),
+          .groups = "drop"
+        ) %>%
+        filter(!is.na(Return_Rate), Total_Sent >= 50) %>%
+        arrange(desc(Return_Rate)) %>%
+        head(25)
+
+      if (nrow(uocava_state) == 0) return(plotly_empty())
+
+      p <- plot_ly(uocava_state, x = ~reorder(state_abbr, Return_Rate),
+                   y = ~Return_Rate, type = 'bar',
+                   marker = list(color = 'rgb(255,127,14)')) %>%
+        layout(
+          title = "UOCAVA Return Rates by State (Top 25)",
+          xaxis = list(title = "State"),
+          yaxis = list(title = "Return Rate (%)")
+        )
+
+      cat("UOCAVA by state created with", nrow(uocava_state), "states\n")
+      return(p)
+
+    }, error = function(e) {
+      cat("ERROR in uocava_by_state:", e$message, "\n")
+      plotly_empty()
+    })
+  })
+
+  cat("=== ALL VISUALIZATIONS COMPLETED ===\n")
   
   cat("=== ALL BASIC OUTPUTS CREATED ===\n")
   
