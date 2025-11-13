@@ -1,0 +1,10 @@
+{
+  "geographic": ["jurisdiction_name", "state_full", "state_abbr"],
+  "registration": ["a1a", "a1b", "a1c", "a3a", "a4a", "a4b", "a4c", "a4e", "a4f", "a12a", "a12b", "a12c", "a12k"],
+  "uocava": ["b1a", "b1b", "b1c", "b5a", "b5b", "b5c", "b11a", "b11b", "b24a", "b24b", "b24c"],
+  "mail_voting": ["c1a", "c1b", "c1c", "c1f", "c8a", "c9a"],
+  "polling": ["d1a", "d3a", "d4a", "d5a", "d6a", "d8"],
+  "provisional": ["e1a", "e1b", "e1c", "e1d"],
+  "turnout": ["f1a", "f1b", "f1c", "f1d", "f1e", "f1f", "f1g"],
+  "equipment": ["f3a", "f4d_1", "f8a"]
+}
