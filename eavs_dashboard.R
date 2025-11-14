@@ -66,7 +66,13 @@ load_dashboard_data <- function() {
 
 # UI
 ui <- dashboardPage(
-  dashboardHeader(title = "Rural LEO Dashboard"),
+  dashboardHeader(
+    title = tags$span(
+      tags$img(src = "iri.png", height = "40px", style = "margin-right: 10px; vertical-align: middle;"),
+      "LEO Dashboard"
+    ),
+    titleWidth = 300
+  ),
   
   dashboardSidebar(
     sidebarMenu(
@@ -85,14 +91,62 @@ ui <- dashboardPage(
   dashboardBody(
     tags$head(
       tags$style(HTML("
+        /* Custom IRI Branding */
+        .skin-blue .main-header .navbar {
+          background-color: #cc092f;
+        }
+        .skin-blue .main-header .logo {
+          background-color: #cc092f;
+          color: #ffffff;
+          border-bottom: 0 solid transparent;
+        }
+        .skin-blue .main-header .logo:hover {
+          background-color: #a60726;
+        }
+        .skin-blue .main-header .navbar .sidebar-toggle:hover {
+          background-color: #a60726;
+        }
+        .skin-blue .main-sidebar {
+          background-color: #222d32;
+        }
+        .skin-blue .sidebar-menu > li.active > a,
+        .skin-blue .sidebar-menu > li:hover > a {
+          border-left-color: #cc092f;
+        }
+        .box.box-primary {
+          border-top-color: #cc092f;
+        }
+        .box.box-solid.box-primary > .box-header {
+          background: #cc092f;
+          background-color: #cc092f;
+        }
+        .btn-primary {
+          background-color: #cc092f;
+          border-color: #a60726;
+        }
+        .btn-primary:hover, .btn-primary:active, .btn-primary:focus {
+          background-color: #a60726;
+          border-color: #8a0620;
+        }
+        .nav-tabs-custom > .nav-tabs > li.active {
+          border-top-color: #cc092f;
+        }
         .content-wrapper, .right-side {
           background-color: #f4f4f4;
         }
         .small-box {
           border-radius: 5px;
         }
-        .nav-tabs-custom > .nav-tabs > li.active {
-          border-top-color: #3c8dbc;
+        /* Value box custom colors */
+        .bg-blue {
+          background-color: #cc092f !important;
+        }
+        /* Info boxes */
+        .info-box-icon {
+          border-radius: 2px;
+        }
+        .small-box.bg-blue {
+          background-color: #cc092f !important;
         }
       "))
     ),
@@ -1823,4 +1877,4 @@ plotly_empty <- function() {
 }
 
 # Run the application
-shinyApp(ui = ui, server = server)
+shinyApp(ui = ui, server = server, options = list(launch.browser = TRUE))
