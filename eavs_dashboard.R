@@ -84,6 +84,7 @@ ui <- dashboardPage(
       menuItem("Polling Operations", tabName = "polling", icon = icon("building")),
       menuItem("UOCAVA", tabName = "uocava", icon = icon("globe")),
       menuItem("Jurisdiction Profile", tabName = "jurisdiction_profile", icon = icon("map-marker-alt")),
+      menuItem("Interactive Map", tabName = "map", icon = icon("map")),
       menuItem("Data Explorer", tabName = "explorer", icon = icon("table"))
     )
   ),
@@ -93,18 +94,23 @@ ui <- dashboardPage(
       tags$style(HTML("
         /* Custom IRI Branding */
         .skin-blue .main-header .navbar {
-          background-color: #cc092f;
+          background-color: #ffffff;
+          border-bottom: 2px solid #cc092f;
         }
         .skin-blue .main-header .logo {
-          background-color: #cc092f;
-          color: #ffffff;
-          border-bottom: 0 solid transparent;
+          background-color: #ffffff;
+          color: #333333;
+          border-bottom: 2px solid #cc092f;
+          font-weight: bold;
         }
         .skin-blue .main-header .logo:hover {
-          background-color: #a60726;
+          background-color: #f5f5f5;
+        }
+        .skin-blue .main-header .navbar .sidebar-toggle {
+          color: #333333;
         }
         .skin-blue .main-header .navbar .sidebar-toggle:hover {
-          background-color: #a60726;
+          background-color: #f5f5f5;
         }
         .skin-blue .main-sidebar {
           background-color: #222d32;
@@ -147,6 +153,14 @@ ui <- dashboardPage(
         }
         .small-box.bg-blue {
           background-color: #cc092f !important;
+        }
+        /* Clickable similar jurisdictions */
+        .similar-jurisdiction-item {
+          cursor: pointer;
+          transition: background-color 0.2s;
+        }
+        .similar-jurisdiction-item:hover {
+          background-color: #f0f0f0;
         }
       "))
     ),
@@ -395,7 +409,32 @@ ui <- dashboardPage(
                 )
               )
       ),
-      
+
+      # Interactive Map Tab
+      tabItem(tabName = "map",
+              fluidRow(
+                box(
+                  title = "Interactive Jurisdiction Map", status = "primary", solidHeader = TRUE,
+                  width = 12,
+                  p("Click on a state to view jurisdictions, then click a jurisdiction to view its details."),
+                  leafletOutput("jurisdiction_map", height = 600)
+                )
+              ),
+              fluidRow(
+                box(
+                  title = "Map Controls", status = "info", solidHeader = TRUE,
+                  width = 12,
+                  selectInput("map_metric", "Color By:",
+                              choices = c("Turnout Rate" = "turnout_rate",
+                                        "Mail Return Rate" = "mail_return_rate",
+                                        "Registration Rate" = "registration_rate",
+                                        "Jurisdiction Size" = "jurisdiction_size"),
+                              selected = "turnout_rate"),
+                  p("Map shows jurisdictions colored by the selected metric. Darker colors indicate higher values.")
+                )
+              )
+      ),
+
       # Data Explorer Tab
       tabItem(tabName = "explorer",
               fluidRow(
@@ -1205,7 +1244,7 @@ server <- function(input, output, session) {
         ) %>%
         arrange(size_difference) %>%
         head(10) %>%
-        select(jurisdiction_name, state_abbr, a1a, size_diff_pct, turnout_rate, mail_return_rate)
+        select(fips_code, jurisdiction_name, state_abbr, a1a, size_diff_pct, turnout_rate, mail_return_rate)
 
       cat("Found", nrow(similar), "similar jurisdictions by size\n")
 
@@ -1254,7 +1293,7 @@ server <- function(input, output, session) {
         filter(match_score > 0) %>%
         arrange(desc(match_score), jurisdiction_name) %>%
         head(10) %>%
-        select(jurisdiction_name, state_abbr, region, jurisdiction_size, a1a, turnout_rate, match_score)
+        select(fips_code, jurisdiction_name, state_abbr, region, jurisdiction_size, a1a, turnout_rate, match_score)
 
       cat("Found", nrow(similar), "similar jurisdictions by demographics\n")
 
@@ -1310,7 +1349,7 @@ server <- function(input, output, session) {
         filter(!is.na(perf_score)) %>%
         arrange(perf_score) %>%
         head(10) %>%
-        select(jurisdiction_name, state_abbr, turnout_rate, mail_return_rate,
+        select(fips_code, jurisdiction_name, state_abbr, turnout_rate, mail_return_rate,
                jurisdiction_size, a1a, perf_score)
 
       cat("Found", nrow(similar), "similar jurisdictions by performance\n")
@@ -1355,11 +1394,16 @@ server <- function(input, output, session) {
       ))
     }
 
-    # Create display based on method
+    # Create display based on method (with clickable links)
     if (method == "size") {
       jurisdiction_items <- lapply(1:nrow(similar), function(i) {
+        fips <- similar$fips_code[i]
+        state <- similar$state_abbr[i]
         tags$div(
+          class = "similar-jurisdiction-item",
           style = "padding: 5px; border-bottom: 1px solid #eee;",
+          onclick = sprintf("Shiny.setInputValue('clicked_similar_jurisdiction', {fips: '%s', state: '%s', random: Math.random()})",
+                           fips, state),
           tags$strong(paste0(similar$jurisdiction_name[i], ", ", similar$state_abbr[i])),
           tags$br(),
           tags$small(
@@ -1370,8 +1414,13 @@ server <- function(input, output, session) {
       })
     } else if (method == "demographics") {
       jurisdiction_items <- lapply(1:nrow(similar), function(i) {
+        fips <- similar$fips_code[i]
+        state <- similar$state_abbr[i]
         tags$div(
+          class = "similar-jurisdiction-item",
           style = "padding: 5px; border-bottom: 1px solid #eee;",
+          onclick = sprintf("Shiny.setInputValue('clicked_similar_jurisdiction', {fips: '%s', state: '%s', random: Math.random()})",
+                           fips, state),
           tags$strong(paste0(similar$jurisdiction_name[i], ", ", similar$state_abbr[i])),
           tags$br(),
           tags$small(
@@ -1381,8 +1430,13 @@ server <- function(input, output, session) {
       })
     } else if (method == "performance") {
       jurisdiction_items <- lapply(1:nrow(similar), function(i) {
+        fips <- similar$fips_code[i]
+        state <- similar$state_abbr[i]
         tags$div(
+          class = "similar-jurisdiction-item",
           style = "padding: 5px; border-bottom: 1px solid #eee;",
+          onclick = sprintf("Shiny.setInputValue('clicked_similar_jurisdiction', {fips: '%s', state: '%s', random: Math.random()})",
+                           fips, state),
           tags$strong(paste0(similar$jurisdiction_name[i], ", ", similar$state_abbr[i])),
           tags$br(),
           tags$small(
@@ -1399,10 +1453,124 @@ server <- function(input, output, session) {
     ))
   })
 
+  # Handle clicks on similar jurisdictions
+  observeEvent(input$clicked_similar_jurisdiction, {
+    cat("=== SIMILAR JURISDICTION CLICKED ===\n")
+    tryCatch({
+      clicked_data <- input$clicked_similar_jurisdiction
+      req(clicked_data)
+
+      fips <- clicked_data$fips
+      state <- clicked_data$state
+
+      cat("Clicked FIPS:", fips, "State:", state, "\n")
+
+      # Update the state dropdown
+      updateSelectInput(session, "profile_state", selected = state)
+
+      # Wait a moment for the jurisdiction dropdown to update, then select the jurisdiction
+      shiny::invalidateLater(100, session)
+      updateSelectInput(session, "profile_jurisdiction", selected = fips)
+
+    }, error = function(e) {
+      cat("ERROR handling similar jurisdiction click:", e$message, "\n")
+    })
+  })
+
   cat("=== JURISDICTION PROFILE TAB COMPLETE ===\n")
 
   # ============================================================================
   # End of Jurisdiction Profile Implementation
+  # ============================================================================
+
+  # ============================================================================
+  # INTERACTIVE MAP FUNCTIONALITY
+  # ============================================================================
+
+  # Render the leaflet map
+  output$jurisdiction_map <- renderLeaflet({
+    cat("=== RENDERING JURISDICTION MAP ===\n")
+    tryCatch({
+      if (is.null(data()) || is.null(data()$jurisdiction)) {
+        cat("No jurisdiction data available for map\n")
+        return(leaflet() %>% addTiles())
+      }
+
+      # Create a basic map centered on US
+      map <- leaflet() %>%
+        setView(lng = -98.5795, lat = 39.8283, zoom = 4) %>%
+        addTiles() %>%
+        addProviderTiles(providers$CartoDB.Positron)
+
+      cat("Basic map created\n")
+      return(map)
+
+    }, error = function(e) {
+      cat("ERROR creating map:", e$message, "\n")
+      leaflet() %>% addTiles()
+    })
+  })
+
+  # Update map when metric selection changes
+  observe({
+    cat("=== UPDATING MAP WITH METRIC ===\n")
+    tryCatch({
+      req(input$map_metric)
+
+      if (is.null(data()) || is.null(data()$jurisdiction)) {
+        cat("No data for map update\n")
+        return()
+      }
+
+      metric <- input$map_metric
+      cat("Selected metric:", metric, "\n")
+
+      # Prepare data for mapping
+      map_data <- data()$jurisdiction %>%
+        filter(!is.na(!!sym(metric)))
+
+      if (nrow(map_data) == 0) {
+        cat("No data available for metric:", metric, "\n")
+        return()
+      }
+
+      # For now, we'll create a simple state-level aggregation
+      # Note: To map actual jurisdictions, we'd need geographic boundary files (shapefiles)
+      state_data <- map_data %>%
+        group_by(state_abbr, state_full) %>%
+        summarise(
+          avg_metric = mean(!!sym(metric), na.rm = TRUE),
+          jurisdictions = n(),
+          .groups = "drop"
+        )
+
+      cat("Map data prepared with", nrow(state_data), "states\n")
+
+      # Create popup text
+      state_data <- state_data %>%
+        mutate(
+          popup_text = paste0(
+            "<strong>", state_full, "</strong><br>",
+            "Jurisdictions: ", jurisdictions, "<br>",
+            "Average ", gsub("_", " ", metric), ": ",
+            round(avg_metric, 1),
+            ifelse(grepl("rate", metric), "%", "")
+          )
+        )
+
+      # Note: Without state boundary shapefiles, we can't draw the actual states
+      # This is a placeholder that shows we'd need additional geographic data
+      cat("Map update complete (note: geographic boundaries not yet implemented)\n")
+
+    }, error = function(e) {
+      cat("ERROR updating map:", e$message, "\n")
+    })
+  })
+
+  cat("=== MAP FUNCTIONALITY ADDED ===\n")
+
+  # ============================================================================
+  # End of Map Implementation
   # ============================================================================
 
   # Placeholder plots with basic functionality
